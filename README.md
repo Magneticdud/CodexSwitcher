@@ -1,22 +1,22 @@
-# codex-model — switch rapido dei modelli Codex
+# codex-model — quick Codex model switching
 
-Serve a evitare la lista di ~700 modelli di OpenRouter quando vuoi solo passare
-tra pochi modelli fissi (tier "opus" / "sonnet" / "haiku"), e a tornare
-all'endpoint OpenAI nativo con un comando.
+Avoid scrolling through OpenRouter's list of roughly 700 models when you only
+need a few fixed models (the "opus" / "sonnet" / "haiku" tiers), and switch
+back to the native OpenAI endpoint with one command.
 
-## Gli alias
+## Aliases
 
-| alias   | provider     | modello                        | reasoning | tier   |
+| alias   | provider     | model                          | reasoning | tier   |
 |---------|--------------|--------------------------------|-----------|--------|
 | `terra` | `openrouter` | `openai/gpt-5.6-terra`         | high      | opus   |
 | `deep`  | `openrouter` | `@preset/deepseek4pro`         | high      | sonnet |
 | `flash` | `openrouter` | `@preset/deepseek4flash-cache` | medium    | haiku  |
 | `oai`   | `openai`     | `gpt-5.6-terra`                | high      | —      |
 
-## Modo 1 — al volo, senza toccare la config
+## Mode 1 — temporary selection
 
-Usa i profili nativi di Codex (`-p` carica `~/.codex/<alias>.config.toml`
-sopra la config base):
+Use Codex's native profiles (`-p` loads `~/.codex/<alias>.config.toml` on top
+of the base configuration):
 
 ```sh
 codex -p terra
@@ -25,103 +25,160 @@ codex -p flash
 codex -p oai
 ```
 
-La config di default resta quella che è: utile per una singola sessione.
+The default configuration remains unchanged, which is useful for a single
+session.
 
-## Modo 2 — cambiare il default persistente
-
-```sh
-codex-model            # menu interattivo numerato
-codex-model terra      # imposta l'alias come default
-codex-model current    # mostra il modello attivo
-codex-model list       # elenco degli alias, ● = attivo
-codex-model sync       # rigenera i profili dopo aver modificato gli alias
-codex-model --help     # riepilogo
-```
-
-`codex-model <alias>` riscrive in `~/.codex/config.toml` solo le righe delle
-chiavi dichiarate nell'alias, lasciando intatti commenti, tabelle e ordine.
-Prima di scrivere salva una copia in `~/.codex/config.toml.bak`.
-
-## Tornare all'endpoint OpenAI
+## Mode 2 — persistent default
 
 ```sh
-codex-model oai      # oppure: codex -p oai
+codex-model            # interactive numbered menu
+codex-model terra      # set the alias as the default
+codex-model current    # show the active model
+codex-model list       # list aliases, ● = active
+codex-model sync       # regenerate profiles after changing aliases
+codex-model --help     # show the summary
 ```
 
-Cambia `model_provider` da `openrouter` a `openai` (il provider integrato di
-Codex) e toglie il prefisso dal nome del modello: su OpenRouter è
-`openai/gpt-5.6-terra`, sull'endpoint nativo è `gpt-5.6-terra`.
+`codex-model <alias>` rewrites only the lines for keys declared by the alias in
+`~/.codex/config.toml`, preserving comments, tables, and ordering. Before
+writing, it saves a copy to `~/.codex/config.toml.bak`.
 
-L'autenticazione è già a posto: `~/.codex/auth.json` contiene il login ChatGPT
-(`auth_mode: chatgpt`, con refresh token), quindi non serve rifare `codex login`.
-Verifica con `codex doctor` — sezione `auth`.
+`model_catalog_json` is managed automatically: it is added only when the alias
+uses a model declared in `catalog_sources`, and removed when switching to an
+OpenAI alias or a model without a custom catalog. This prevents an OpenRouter
+catalog from remaining active accidentally after `codex-model oai`.
 
-Se un id modello viene rifiutato, lancia `codex -p oai` e usa `/model` dentro la
-TUI: con provider `openai` la lista è corta, non 700 voci.
+## Switching back to OpenAI
 
-Per tornare su OpenRouter basta un altro alias (`codex-model deep`): serve la
-variabile `OPENROUTER_API_KEY`, già esportata in `~/.zshrc`.
-
-## Attenzione alle chiavi "appiccicate"
-
-Una chiave **non** dichiarata in un alias mantiene il valore lasciato dall'alias
-precedente. È il motivo per cui `model_provider` è ripetuto in tutti e quattro
-gli alias: senza, dopo `codex-model oai` un `codex-model deep` resterebbe su
-provider `openai` con un id OpenRouter, e fallirebbe.
-
-`codex-model` avvisa da solo quando succede:
-
-```
-! 'model_provider' non e' dichiarato in [deep]: resta openai
+```sh
+codex-model oai      # or: codex -p oai
 ```
 
-Se vedi quel warning, aggiungi la chiave mancante all'alias in questione.
+This changes `model_provider` from `openrouter` to `openai` (Codex's built-in
+provider) and removes the provider prefix from the model name: on OpenRouter it
+is `openai/gpt-5.6-terra`, while the native endpoint uses `gpt-5.6-terra`.
 
-## Aggiungere o modificare un modello
+Authentication is already configured: `~/.codex/auth.json` contains the
+ChatGPT login (`auth_mode: chatgpt`, with a refresh token), so you do not need
+to run `codex login` again. Check it with `codex doctor` in the `auth` section.
 
-Unico file da toccare: **`~/.codex/model_aliases.toml`**
+If a model ID is rejected, run `codex -p oai` and use `/model` inside the TUI.
+The native `openai` provider has a short model list rather than OpenRouter's
+700-plus entries.
+
+To switch back to OpenRouter, use another alias (`codex-model deep`). This
+requires `OPENROUTER_API_KEY`, already exported in `~/.zshrc`.
+
+## Beware of sticky keys
+
+A key **not** declared in an alias retains the value left by the previous alias.
+This is why `model_provider` is repeated in all aliases: without it,
+after `codex-model oai`, running `codex-model deep` would leave the provider set
+to `openai` while using an OpenRouter model ID, causing the request to fail.
+
+`codex-model` warns when this happens:
+
+```
+! 'model_provider' is not declared in [deep]: keeping openai
+```
+
+If you see this warning, add the missing key to the relevant alias.
+
+## Adding or changing a model
+
+The only file you need to edit is **`~/.codex/model_aliases.toml`**:
 
 ```toml
-[nuovo]
+[new]
 model_provider = "openrouter"
 model = "google/gemini-3.5-flash"
 model_reasoning_effort = "medium"
 ```
 
-Poi:
+Then run:
 
 ```sh
-codex-model sync      # genera ~/.codex/nuovo.config.toml → codex -p nuovo
-codex-model nuovo     # oppure impostalo come default
+codex-model sync      # generate ~/.codex/new.config.toml → codex -p new
+codex-model new       # or set it as the default
 ```
 
-Il nome della tabella **è** il nome dell'alias: per chiamarli `opus`/`sonnet`/`haiku`
-basta rinominare le tre tabelle e rilanciare `codex-model sync`
-(i vecchi file `~/.codex/<vecchio-nome>.config.toml` vanno cancellati a mano).
+The table name **is** the alias name. To call the tiers `opus` / `sonnet` /
+`haiku`, rename the three tables and run `codex-model sync` again. Old files
+such as `~/.codex/<old-name>.config.toml` must be removed manually.
 
-Qualsiasi chiave valida di `config.toml` messa dentro una tabella viene applicata,
-non solo `model` — es. `model_provider`, `approval_policy`.
+Any valid `config.toml` key placed inside an alias table is applied, not just
+`model` — for example, `model_provider` and `approval_policy`.
 
-Per vedere gli id esatti dei modelli OpenRouter:
+## Custom metadata catalog for OpenRouter presets
+
+An OpenRouter preset (`@preset/...`) may not appear in
+`~/.codex/models_cache.json`. If Codex displays the warning `Model metadata ...
+not found`, define the preset's source in the same alias configuration:
+
+```toml
+[catalog_sources."@preset/deepseek4flash-cache"]
+source = "deepseek/deepseek-v4-flash"
+display_name = "DeepSeek V4 Flash (cache preset)"
+```
+
+Then regenerate the catalog and select the preset:
+
+```sh
+codex-model catalog     # write ~/.codex/openrouter_catalog.json
+codex-model flash       # enable model_catalog_json in config.toml
+```
+
+`codex-model catalog` only generates the JSON metadata file; selecting the
+preset alias is what updates `config.toml`.
+
+You do not need to add `model_catalog_json` to aliases manually: the script
+adds it to aliases whose model slug is present in `catalog_sources`. When you
+select `codex-model terra` or `codex-model oai`, the line is removed instead.
+
+The command reads the original entry from the cache and writes the complete
+Codex catalog document in the form `{"models": [...]}`. Do not write the entry
+object directly with `jq`: that produces a document without the root `models`
+field and causes the `missing field models` error.
+
+The equivalent generation using only `jq` is:
+
+```sh
+jq --arg slug '@preset/deepseek4flash-cache' \
+   --arg name 'DeepSeek V4 Flash (cache preset)' \
+   '(.models | map(select(.slug == "deepseek/deepseek-v4-flash"))) as $found
+    | if ($found | length) != 1 then
+        error("source model not found or duplicated")
+      else
+        {models: [($found[0] | .slug = $slug | .display_name = $name)]}
+      end' \
+   ~/.codex/models_cache.json > ~/.codex/openrouter_catalog.json
+```
+
+Add more `catalog_sources` tables to support multiple presets;
+`codex-model catalog` includes them all. After Codex updates its model cache,
+run the command again to refresh the metadata.
+
+To see the exact OpenRouter model IDs:
 
 ```sh
 curl -s https://openrouter.ai/api/v1/models | jq -r '.data[].id' | sort
 ```
 
-## File coinvolti
+## Files
 
-| percorso                          | cosa |
-|-----------------------------------|------|
-| `~/.local/bin/codex-model`        | lo script (Python 3.11+, nessuna dipendenza) |
-| `~/.codex/model_aliases.toml`     | definizione degli alias — l'unico da editare |
-| `~/.codex/<alias>.config.toml`    | profili generati da `sync`, per `codex -p` |
-| `~/.codex/config.toml`            | config Codex, modificata da `codex-model <alias>` |
-| `~/.codex/config.toml.bak`        | backup automatico dell'ultimo switch |
-| `~/.codex/auth.json`              | login ChatGPT, usato dall'alias `oai` |
+| path                                | purpose |
+|-------------------------------------|---------|
+| `~/.local/bin/codex-model`          | the script (Python 3.11+, no dependencies) |
+| `~/.codex/model_aliases.toml`       | alias definitions — the only file to edit |
+| `~/.codex/<alias>.config.toml`      | profiles generated by `sync`, for `codex -p` |
+| `~/.codex/openrouter_catalog.json`  | custom metadata generated by `catalog` |
+| `~/.codex/config.toml`              | Codex configuration modified by `codex-model <alias>` |
+| `~/.codex/config.toml.bak`          | automatic backup of the last switch |
+| `~/.codex/auth.json`                | ChatGPT login used by the `oai` alias |
 
-## Se qualcosa va storto
+## Troubleshooting
 
 ```sh
-cp ~/.codex/config.toml.bak ~/.codex/config.toml   # ripristina il backup
-codex doctor                                        # config, auth, provider
+cp ~/.codex/config.toml.bak ~/.codex/config.toml   # restore the backup
+codex doctor                                        # check config, auth, provider
 ```

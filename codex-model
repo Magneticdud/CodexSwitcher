@@ -7,22 +7,29 @@ Uso:
   codex-model current         mostra il modello attivo
   codex-model list            elenca gli alias
   codex-model sync            (ri)genera i profili ~/.codex/<alias>.config.toml
+  codex-model catalog         genera ~/.codex/openrouter_catalog.json dal cache
 
-Gli alias si definiscono in ~/.codex/model_aliases.toml
+Gli alias e le sorgenti del catalogo si definiscono in
+~/.codex/model_aliases.toml
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 CONFIG = CODEX_HOME / "config.toml"
 ALIASES = CODEX_HOME / "model_aliases.toml"
+MODELS_CACHE = CODEX_HOME / "models_cache.json"
+CATALOG = CODEX_HOME / "openrouter_catalog.json"
+CATALOG_SOURCES = "catalog_sources"
 
 BOLD, DIM, GREEN, RED, YELLOW, RESET = (
     "\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[0m")
@@ -35,14 +42,95 @@ def die(msg: str) -> None:
     raise SystemExit(1)
 
 
-def load_aliases() -> dict[str, dict]:
+def load_alias_file() -> dict:
     if not ALIASES.exists():
         die(f"{ALIASES} non trovato")
-    data = tomllib.loads(ALIASES.read_text())
-    out = {k: v for k, v in data.items() if isinstance(v, dict)}
+    try:
+        return tomllib.loads(ALIASES.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        die(f"{ALIASES} non e' un TOML valido: {exc}")
+
+
+def load_aliases() -> dict[str, dict]:
+    data = load_alias_file()
+    out = {k: dict(v) for k, v in data.items()
+           if isinstance(v, dict) and k != CATALOG_SOURCES}
     if not out:
         die(f"nessun alias definito in {ALIASES}")
+    raw_catalog_sources = data.get(CATALOG_SOURCES, {})
+    if not isinstance(raw_catalog_sources, dict):
+        die(f"[{CATALOG_SOURCES}] deve essere una tabella TOML")
+    catalog_targets = set(raw_catalog_sources)
+    for settings in out.values():
+        if settings.get("model") in catalog_targets:
+            settings["model_catalog_json"] = CATALOG.as_posix()
+        else:
+            settings["model_catalog_json"] = None
     return out
+
+
+def load_catalog_sources() -> dict[str, dict[str, str | None]]:
+    sources = load_alias_file().get(CATALOG_SOURCES, {})
+    if not isinstance(sources, dict):
+        die(f"[{CATALOG_SOURCES}] deve essere una tabella TOML")
+
+    out = {}
+    for target, value in sources.items():
+        if isinstance(value, str):
+            source = value
+            display_name = None
+        elif isinstance(value, dict):
+            source = value.get("source")
+            display_name = value.get("display_name")
+            if display_name is not None and not isinstance(display_name, str):
+                die(f"display_name non valido per {target}")
+        else:
+            die(f"sorgente catalogo non valida per {target}")
+        if not isinstance(source, str) or not source:
+            die(f"source mancante o non valida per {target}")
+        out[target] = {"source": source, "display_name": display_name}
+    if not out:
+        die(f"nessuna sorgente definita in [{CATALOG_SOURCES}] di {ALIASES}")
+    return out
+
+
+def sync_catalog() -> None:
+    if not MODELS_CACHE.exists():
+        die(f"{MODELS_CACHE} non trovato: avvia codex per scaricare il catalogo")
+    try:
+        cache = json.loads(MODELS_CACHE.read_text())
+    except json.JSONDecodeError as exc:
+        die(f"{MODELS_CACHE} non e' JSON valido: {exc}")
+    models = cache.get("models") if isinstance(cache, dict) else None
+    if not isinstance(models, list):
+        die(f"{MODELS_CACHE} non contiene una lista 'models'")
+
+    by_slug = {entry.get("slug"): entry for entry in models
+               if isinstance(entry, dict) and isinstance(entry.get("slug"), str)}
+    catalog_models = []
+    for target, details in load_catalog_sources().items():
+        source = details["source"]
+        if source not in by_slug:
+            die(f"modello '{source}' non trovato in {MODELS_CACHE}")
+        entry = dict(by_slug[source])
+        entry["slug"] = target
+        if details["display_name"] is not None:
+            entry["display_name"] = details["display_name"]
+        catalog_models.append(entry)
+
+    content = json.dumps({"models": catalog_models}, indent=2,
+                         ensure_ascii=False) + "\n"
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8",
+                                         dir=CATALOG.parent, delete=False) as handle:
+            handle.write(content)
+            temporary_path = Path(handle.name)
+        os.replace(temporary_path, CATALOG)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
+    print(f"{GREEN}✓{RESET} {CATALOG}  {DIM}({len(catalog_models)} modello/i){RESET}")
 
 
 def split_preamble(text: str) -> tuple[list[str], list[str]]:
@@ -78,8 +166,11 @@ def set_default(name: str, settings: dict) -> None:
     head, tail = split_preamble(text)
 
     for key, value in settings.items():
-        line = f'{key} = "{value}"' if isinstance(value, str) else f"{key} = {value}"
         pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
+        if value is None:
+            head = [line for line in head if not pattern.match(line)]
+            continue
+        line = f'{key} = "{value}"' if isinstance(value, str) else f"{key} = {value}"
         for i, existing in enumerate(head):
             if pattern.match(existing):
                 head[i] = line
@@ -93,7 +184,7 @@ def set_default(name: str, settings: dict) -> None:
         shutil.copy2(CONFIG, CONFIG.with_suffix(".toml.bak"))
     CONFIG.write_text("\n".join(head + tail).rstrip() + "\n")
 
-    desc = "  ".join(f"{k}={v}" for k, v in settings.items())
+    desc = "  ".join(f"{k}={v}" for k, v in settings.items() if v is not None)
     print(f"{GREEN}✓{RESET} default → {BOLD}{name}{RESET}  {DIM}{desc}{RESET}")
 
 
@@ -107,6 +198,8 @@ def sync_profiles(aliases: dict[str, dict]) -> None:
         path = CODEX_HOME / f"{name}.config.toml"
         body = [f"# generato da codex-model sync — alias '{name}'"]
         for key, value in settings.items():
+            if value is None:
+                continue
             body.append(f'{key} = "{value}"' if isinstance(value, str) else f"{key} = {value}")
         path.write_text("\n".join(body) + "\n")
         print(f"{GREEN}✓{RESET} {path}  {DIM}(codex -p {name}){RESET}")
@@ -144,6 +237,10 @@ def pick(aliases: dict[str, dict]) -> str | None:
 
 def main() -> None:
     args = sys.argv[1:]
+    if args and args[0] in ("catalog", "sync-catalog"):
+        sync_catalog()
+        return
+
     aliases = load_aliases()
 
     if not args:
