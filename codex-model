@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Switch rapido tra pochi modelli Codex, senza scorrere i 700 di OpenRouter.
+
+Uso:
+  codex-model                 menu interattivo
+  codex-model <alias>         imposta l'alias come modello di default
+  codex-model current         mostra il modello attivo
+  codex-model list            elenca gli alias
+  codex-model sync            (ri)genera i profili ~/.codex/<alias>.config.toml
+
+Gli alias si definiscono in ~/.codex/model_aliases.toml
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import sys
+import tomllib
+from pathlib import Path
+
+CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+CONFIG = CODEX_HOME / "config.toml"
+ALIASES = CODEX_HOME / "model_aliases.toml"
+
+BOLD, DIM, GREEN, RED, YELLOW, RESET = (
+    "\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[0m")
+if not sys.stdout.isatty():
+    BOLD = DIM = GREEN = RED = YELLOW = RESET = ""
+
+
+def die(msg: str) -> None:
+    print(f"{RED}errore:{RESET} {msg}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def load_aliases() -> dict[str, dict]:
+    if not ALIASES.exists():
+        die(f"{ALIASES} non trovato")
+    data = tomllib.loads(ALIASES.read_text())
+    out = {k: v for k, v in data.items() if isinstance(v, dict)}
+    if not out:
+        die(f"nessun alias definito in {ALIASES}")
+    return out
+
+
+def split_preamble(text: str) -> tuple[list[str], list[str]]:
+    """Divide config.toml nelle righe prima della prima tabella e nel resto."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if re.match(r"\s*\[", line):
+            return lines[:i], lines[i:]
+    return lines, []
+
+
+def read_current() -> dict[str, str]:
+    if not CONFIG.exists():
+        return {}
+    data = tomllib.loads(CONFIG.read_text())
+    return {k: v for k, v in data.items() if not isinstance(v, (dict, list))}
+
+
+def warn_sticky(name: str, settings: dict, aliases: dict[str, dict]) -> None:
+    """Le chiavi gestite da altri alias ma assenti qui restano al valore precedente."""
+    missing = {k for a in aliases.values() for k in a} - set(settings)
+    if not missing:
+        return
+    current = read_current()
+    for key in sorted(missing):
+        value = current.get(key, "(non impostato)")
+        print(f"{YELLOW}!{RESET} '{key}' non e' dichiarato in [{name}]: "
+              f"resta {BOLD}{value}{RESET}", file=sys.stderr)
+
+
+def set_default(name: str, settings: dict) -> None:
+    text = CONFIG.read_text() if CONFIG.exists() else ""
+    head, tail = split_preamble(text)
+
+    for key, value in settings.items():
+        line = f'{key} = "{value}"' if isinstance(value, str) else f"{key} = {value}"
+        pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
+        for i, existing in enumerate(head):
+            if pattern.match(existing):
+                head[i] = line
+                break
+        else:
+            # inserisce dopo l'ultima riga non vuota del preambolo
+            pos = max((i for i, l in enumerate(head) if l.strip()), default=-1) + 1
+            head.insert(pos, line)
+
+    if CONFIG.exists():
+        shutil.copy2(CONFIG, CONFIG.with_suffix(".toml.bak"))
+    CONFIG.write_text("\n".join(head + tail).rstrip() + "\n")
+
+    desc = "  ".join(f"{k}={v}" for k, v in settings.items())
+    print(f"{GREEN}✓{RESET} default → {BOLD}{name}{RESET}  {DIM}{desc}{RESET}")
+
+
+def apply(name: str, aliases: dict[str, dict]) -> None:
+    warn_sticky(name, aliases[name], aliases)
+    set_default(name, aliases[name])
+
+
+def sync_profiles(aliases: dict[str, dict]) -> None:
+    for name, settings in aliases.items():
+        path = CODEX_HOME / f"{name}.config.toml"
+        body = [f"# generato da codex-model sync — alias '{name}'"]
+        for key, value in settings.items():
+            body.append(f'{key} = "{value}"' if isinstance(value, str) else f"{key} = {value}")
+        path.write_text("\n".join(body) + "\n")
+        print(f"{GREEN}✓{RESET} {path}  {DIM}(codex -p {name}){RESET}")
+
+
+def show_list(aliases: dict[str, dict]) -> None:
+    current = read_current().get("model")
+    for name, settings in aliases.items():
+        mark = f"{GREEN}●{RESET}" if settings.get("model") == current else " "
+        meta = " ".join(filter(None, (settings.get("model_provider"),
+                                      settings.get("model_reasoning_effort"))))
+        print(f" {mark} {BOLD}{name:<10}{RESET} {settings.get('model','?'):<32} {DIM}{meta}{RESET}")
+
+
+def pick(aliases: dict[str, dict]) -> str | None:
+    names = list(aliases)
+    current = read_current().get("model")
+    print(f"{BOLD}Modello Codex{RESET} {DIM}(invio per annullare){RESET}")
+    for i, name in enumerate(names, 1):
+        mark = f"{GREEN}●{RESET}" if aliases[name].get("model") == current else " "
+        print(f" {mark} {i}) {BOLD}{name:<10}{RESET} {DIM}{aliases[name].get('model','?')}{RESET}")
+    try:
+        choice = input("> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    if not choice:
+        return None
+    if choice.isdigit() and 1 <= int(choice) <= len(names):
+        return names[int(choice) - 1]
+    if choice in aliases:
+        return choice
+    die(f"scelta non valida: {choice}")
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    aliases = load_aliases()
+
+    if not args:
+        name = pick(aliases)
+        if name:
+            apply(name, aliases)
+        return
+
+    cmd = args[0]
+    if cmd in ("current", "-c"):
+        cur = read_current()
+        print(f"{BOLD}{cur.get('model', '(non impostato)')}{RESET} "
+              f"{DIM}{cur.get('model_reasoning_effort', '')}{RESET}")
+    elif cmd in ("list", "ls", "-l"):
+        show_list(aliases)
+    elif cmd == "sync":
+        sync_profiles(aliases)
+    elif cmd in ("-h", "--help", "help"):
+        print(__doc__)
+    elif cmd in aliases:
+        apply(cmd, aliases)
+    else:
+        die(f"alias sconosciuto '{cmd}' — disponibili: {', '.join(aliases)}")
+
+
+if __name__ == "__main__":
+    main()
