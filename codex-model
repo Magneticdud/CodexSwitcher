@@ -32,7 +32,13 @@ CATALOG = CODEX_HOME / "openrouter_catalog.json"
 CATALOG_SOURCES = "catalog_sources"
 
 BOLD, DIM, GREEN, RED, YELLOW, RESET = (
-    "\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[0m")
+    "\033[1m",
+    "\033[2m",
+    "\033[32m",
+    "\033[31m",
+    "\033[33m",
+    "\033[0m",
+)
 if not sys.stdout.isatty():
     BOLD = DIM = GREEN = RED = YELLOW = RESET = ""
 
@@ -53,8 +59,11 @@ def load_alias_file() -> dict:
 
 def load_aliases() -> dict[str, dict]:
     data = load_alias_file()
-    out = {k: dict(v) for k, v in data.items()
-           if isinstance(v, dict) and k != CATALOG_SOURCES}
+    out = {
+        k: dict(v)
+        for k, v in data.items()
+        if isinstance(v, dict) and k != CATALOG_SOURCES
+    }
     if not out:
         die(f"nessun alias definito in {ALIASES}")
     raw_catalog_sources = data.get(CATALOG_SOURCES, {})
@@ -105,8 +114,11 @@ def sync_catalog() -> None:
     if not isinstance(models, list):
         die(f"{MODELS_CACHE} non contiene una lista 'models'")
 
-    by_slug = {entry.get("slug"): entry for entry in models
-               if isinstance(entry, dict) and isinstance(entry.get("slug"), str)}
+    by_slug = {
+        entry.get("slug"): entry
+        for entry in models
+        if isinstance(entry, dict) and isinstance(entry.get("slug"), str)
+    }
     catalog_models = []
     for target, details in load_catalog_sources().items():
         source = details["source"]
@@ -118,12 +130,14 @@ def sync_catalog() -> None:
             entry["display_name"] = details["display_name"]
         catalog_models.append(entry)
 
-    content = json.dumps({"models": catalog_models}, indent=2,
-                         ensure_ascii=False) + "\n"
+    content = (
+        json.dumps({"models": catalog_models}, indent=2, ensure_ascii=False) + "\n"
+    )
     temporary_path = None
     try:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8",
-                                         dir=CATALOG.parent, delete=False) as handle:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=CATALOG.parent, delete=False
+        ) as handle:
             handle.write(content)
             temporary_path = Path(handle.name)
         os.replace(temporary_path, CATALOG)
@@ -157,8 +171,11 @@ def warn_sticky(name: str, settings: dict, aliases: dict[str, dict]) -> None:
     current = read_current()
     for key in sorted(missing):
         value = current.get(key, "(non impostato)")
-        print(f"{YELLOW}!{RESET} '{key}' non e' dichiarato in [{name}]: "
-              f"resta {BOLD}{value}{RESET}", file=sys.stderr)
+        print(
+            f"{YELLOW}!{RESET} '{key}' non e' dichiarato in [{name}]: "
+            f"resta {BOLD}{value}{RESET}",
+            file=sys.stderr,
+        )
 
 
 def set_default(name: str, settings: dict) -> None:
@@ -200,7 +217,9 @@ def sync_profiles(aliases: dict[str, dict]) -> None:
         for key, value in settings.items():
             if value is None:
                 continue
-            body.append(f'{key} = "{value}"' if isinstance(value, str) else f"{key} = {value}")
+            body.append(
+                f'{key} = "{value}"' if isinstance(value, str) else f"{key} = {value}"
+            )
         path.write_text("\n".join(body) + "\n")
         print(f"{GREEN}✓{RESET} {path}  {DIM}(codex -p {name}){RESET}")
 
@@ -209,9 +228,18 @@ def show_list(aliases: dict[str, dict]) -> None:
     current = read_current().get("model")
     for name, settings in aliases.items():
         mark = f"{GREEN}●{RESET}" if settings.get("model") == current else " "
-        meta = " ".join(filter(None, (settings.get("model_provider"),
-                                      settings.get("model_reasoning_effort"))))
-        print(f" {mark} {BOLD}{name:<10}{RESET} {settings.get('model','?'):<32} {DIM}{meta}{RESET}")
+        meta = " ".join(
+            filter(
+                None,
+                (
+                    settings.get("model_provider"),
+                    settings.get("model_reasoning_effort"),
+                ),
+            )
+        )
+        print(
+            f" {mark} {BOLD}{name:<10}{RESET} {settings.get('model','?'):<32} {DIM}{meta}{RESET}"
+        )
 
 
 def pick(aliases: dict[str, dict]) -> str | None:
@@ -220,7 +248,9 @@ def pick(aliases: dict[str, dict]) -> str | None:
     print(f"{BOLD}Modello Codex{RESET} {DIM}(invio per annullare){RESET}")
     for i, name in enumerate(names, 1):
         mark = f"{GREEN}●{RESET}" if aliases[name].get("model") == current else " "
-        print(f" {mark} {i}) {BOLD}{name:<10}{RESET} {DIM}{aliases[name].get('model','?')}{RESET}")
+        print(
+            f" {mark} {i}) {BOLD}{name:<10}{RESET} {DIM}{aliases[name].get('model','?')}{RESET}"
+        )
     try:
         choice = input("> ").strip()
     except (EOFError, KeyboardInterrupt):
@@ -252,8 +282,10 @@ def main() -> None:
     cmd = args[0]
     if cmd in ("current", "-c"):
         cur = read_current()
-        print(f"{BOLD}{cur.get('model', '(non impostato)')}{RESET} "
-              f"{DIM}{cur.get('model_reasoning_effort', '')}{RESET}")
+        print(
+            f"{BOLD}{cur.get('model', '(non impostato)')}{RESET} "
+            f"{DIM}{cur.get('model_reasoning_effort', '')}{RESET}"
+        )
     elif cmd in ("list", "ls", "-l"):
         show_list(aliases)
     elif cmd == "sync":
