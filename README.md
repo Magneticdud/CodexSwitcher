@@ -4,7 +4,7 @@ Avoid scrolling through OpenRouter's list of roughly 700 models when you only
 need a few fixed models (the "opus" / "sonnet" / "haiku" tiers), and switch
 back to the native OpenAI endpoint with one command.
 
-## Aliases
+## Aliases (this is an example, you need to write your own description file, see the chapter "Adding or changing a model")
 
 | alias   | provider     | model                          | reasoning | tier   |
 |---------|--------------|--------------------------------|-----------|--------|
